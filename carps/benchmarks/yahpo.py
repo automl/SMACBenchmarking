@@ -91,7 +91,7 @@ class YahpoProblem(Problem):
         self._problem = BenchmarkSet(scenario=bench, instance=self.instance, check=False)
         self._configspace = self._problem.get_opt_space(drop_fidelity_params=True)
         self.fidelity_space = self._problem.get_fidelity_space()
-        self.fidelity_dims = list(self._problem.get_fidelity_space()._hyperparameters.keys())
+        self.fidelity_dims = list(self._problem.get_fidelity_space().keys())
 
         self.budget_type = budget_type
         self.lower_is_better = lower_is_better
@@ -106,7 +106,7 @@ class YahpoProblem(Problem):
             other_fidelities = [fid for fid in self.fidelity_dims if fid != self.budget_type]
             self.max_other_fidelities = {}
             for fidelity in other_fidelities:
-                self.max_other_fidelities[fidelity] = self.fidelity_space.get_hyperparameter(fidelity).upper
+                self.max_other_fidelities[fidelity] = self.fidelity_space[fidelity].upper
 
         if not isinstance(metric, list | ListConfig):
             metric = [metric]
@@ -146,7 +146,7 @@ class YahpoProblem(Problem):
             Cost
         """
         configuration = trial_info.config
-        xs = configuration.get_dictionary()
+        xs = dict(configuration)
 
         # If there are multiple fidelities, we take maximum fidelity value for the respective other fidelity dimensions
         # If we are in the blackbox setting, we take maximum fidelity value for all fidelity dimensions

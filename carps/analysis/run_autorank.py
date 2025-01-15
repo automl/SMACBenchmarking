@@ -109,7 +109,8 @@ def get_df_crit(
         lost = df_crit[nan_ids]
 
         # Rows are problems, cols are optimizers
-        df_crit = df_crit[~nan_ids]
+        if len(lost) > 0:
+            df_crit = df_crit[~nan_ids]
         logger.info(f"Lost following experiments: {lost}")
     elif nan_handling == "keep":
         pass
@@ -125,7 +126,11 @@ def get_df_crit(
 
 
 def calc_critical_difference(
-    df: pd.DataFrame, identifier: str | None = None, figsize=(12, 8), perf_col: str = "trial_value__cost_inc_norm"
+    df: pd.DataFrame,
+    identifier: str | None = None,
+    figsize=(12, 8),
+    perf_col: str = "trial_value__cost_inc_norm",
+    plot_diagram: bool = True,
 ) -> RankResult:
     df_crit = get_df_crit(df, perf_col=perf_col)
 
@@ -149,6 +154,7 @@ def calc_critical_difference(
         ignore_non_significance=True,
         output_path=f"figures/critd/cd{identifier}",
         figsize=figsize,
+        plot_diagram=plot_diagram,
     )
 
 
@@ -273,6 +279,8 @@ def cd_evaluation(
     ignore_non_significance=False,
     plt_title=None,
     figsize=(12, 8),
+    plot_diagram=True,
+    verbose = False,
 ) -> RankResult:
     """Performance per dataset is  a dataframe that stores the performance (with respect to a metric) for  set of
     configurations / models / algorithms per dataset. In  detail, the columns are individual configurations.
@@ -286,7 +294,6 @@ def cd_evaluation(
     # -- Settings for autorank
     alpha = 0.05
     effect_size = None
-    verbose = True
     order = "ascending"  # always due to the preprocessing
     alpha_normality = alpha / len(rank_data.columns)
     all_normal, pvals_shapiro = test_normality(rank_data, alpha_normality, verbose)
@@ -314,8 +321,8 @@ def cd_evaluation(
         None,
         res.effect_size,
         None,
+        force_mode=None,
     )
-    print(res.rankdf)
     is_significant = True
     if result.pvalue >= result.alpha:
         if ignore_non_significance:
@@ -328,22 +335,23 @@ def cd_evaluation(
             )
 
     # -- Plot
-    fig, ax = plt.subplots(figsize=figsize)
-    plt.rcParams.update({"font.size": 16})
-    _custom_cd_diagram(result, False, ax, figsize[0])  # order == "descending", ax, 8)
-    if plt_title or not is_significant:
-        plt_title = ""
-        if not is_significant:
-            plt_title += "(non-significant)"
-        plt.title(plt_title)
-    plt.tight_layout()
-    if output_path:
-        Path(output_path).parent.mkdir(exist_ok=True, parents=True)
-        plt.savefig(output_path + ".png", transparent=True, bbox_inches="tight")
-        plt.savefig(output_path + ".pdf", transparent=True, bbox_inches="tight")
+    if plot_diagram:
+        fig, ax = plt.subplots(figsize=figsize)
+        plt.rcParams.update({"font.size": 16})
+        _custom_cd_diagram(result, False, ax, figsize[0])  # order == "descending", ax, 8)
+        if plt_title or not is_significant:
+            plt_title = ""
+            if not is_significant:
+                plt_title += "(non-significant)"
+            plt.title(plt_title)
+        plt.tight_layout()
+        if output_path:
+            Path(output_path).parent.mkdir(exist_ok=True, parents=True)
+            plt.savefig(output_path + ".png", transparent=True, bbox_inches="tight")
+            plt.savefig(output_path + ".pdf", transparent=True, bbox_inches="tight")
 
-    plt.show()
-    plt.close()
+        plt.show()
+        plt.close()
 
     return result
 

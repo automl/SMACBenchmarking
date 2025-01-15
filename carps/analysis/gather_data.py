@@ -90,7 +90,17 @@ def load_log(rundir: str | Path, log_fn: str = "trial_logs.jsonl") -> pd.DataFra
         df["cfg_fn"] = config_fn
         df["cfg_str"] = [(config_fn, cfg_str)] * len(df)
 
-        config_keys = ["benchmark", "problem", "seed", "optimizer_id", "task"]
+        config_keys = [
+            "benchmark_id",
+            "problemd_id",
+            "scenario",
+            "subset_id",
+            "benchmark",
+            "problem",
+            "seed",
+            "optimizer_id",
+            "task",
+        ]
         config_keys_forbidden = ["_target_", "_partial_"]
         df = annotate_with_cfg(df=df, cfg=cfg, config_keys=config_keys, config_keys_forbidden=config_keys_forbidden)
         # df = maybe_add_bandit_log(df, rundir, n_initial_design=cfg.task.n_initial_design)
@@ -346,8 +356,11 @@ def process_logs(logs: pd.DataFrame, keep_task_columns: list[str] | None = None)
 
     # Add time
     logger.debug("Calculate the elapsed time...")
-    logs = logs.groupby(by=["problem_id", "optimizer_id", "seed"]).apply(calc_time).reset_index(drop=True)
-
+    logs = (
+        logs.groupby(by=["problem_id", "optimizer_id", "seed"])
+        .apply(calc_time, include_groups=False)
+        .reset_index(drop=False)
+    )
     logs = convert_mixed_types_to_str(logs, logger)
     logger.debug("Done 😪🙂")
     return logs
@@ -367,9 +380,23 @@ def normalize_logs(logs: pd.DataFrame) -> pd.DataFrame:
         logs["trial_value__cost_inc"] = logs["trial_value__cost"].transform("cummin")
     logs["trial_value__cost_norm"] = logs.groupby("problem_id")["trial_value__cost"].transform(normalize)
     logger.info("Calc normalized incumbent cost...")
+
+    # logs["trial_value__cost_log"] = logs["trial_value__cost"].apply(lambda x: np.log(x + 1e-10))
+    logs["trial_value__cost_log"] = logs.groupby(by=["problem_id"])["trial_value__cost"].transform(
+        lambda x: np.log(x - x.min() + 1e-10)
+    )
+    logs["trial_value__cost_inc_log"] = logs.groupby(by=["problem_id", "optimizer_id", "seed"])[
+        "trial_value__cost_log"
+    ].transform("cummin")
+    logs["trial_value__cost_log_norm"] = logs.groupby("problem_id")["trial_value__cost_log"].transform(normalize)
+    logs["trial_value__cost_inc_log_norm"] = logs.groupby(by=["problem_id", "optimizer_id", "seed"])[
+        "trial_value__cost_log_norm"
+    ].transform("cummin")
+
     logs["trial_value__cost_inc_norm"] = logs.groupby(by=["problem_id", "optimizer_id", "seed"])[
         "trial_value__cost_norm"
     ].transform("cummin")
+    logs["trial_value__cost_inc_norm_log"] = logs["trial_value__cost_inc_norm"].apply(lambda x: np.log(x + 1e-10))
     if "time" not in logs:
         logs["time"] = 0
     logger.info("Normalize time...")
@@ -427,7 +454,10 @@ def get_interpolated_performance_df(
             "trial_value__cost",
             "trial_value__cost_norm",
             "trial_value__cost_inc",
+            "trial_value__cost_inc_log",
+            "trial_value__cost_inc_log_norm",
             "trial_value__cost_inc_norm",
+            "trial_value__cost_inc_norm_log",
         ]
     logger.info("Create dataframe for neat plotting by aligning x-axis / interpolating budget.")
 
@@ -473,21 +503,46 @@ def load_logs(rundir: str):
 
 # NOTE(eddiebergman): Use `n_processes=None` as default, which uses `os.cpu_count()` in `Pool`
 def filelogs_to_df(
-    rundir: str, log_fn: str = "trial_logs.jsonl", n_processes: int | None = None
+    rundir: str | list[str], log_fn: str = "trial_logs.jsonl", n_processes: int | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    logger.info(f"Get rundirs from {rundir}...")
-    rundirs = get_run_dirs(rundir)
-    logger.info(f"Found {len(rundirs)} runs. Load data...")
-    partial_load_log = partial(load_log, log_fn=log_fn)
-    results = map_multiprocessing(partial_load_log, rundirs, n_processes=n_processes)
-    df = pd.concat(results).reset_index(drop=True)
-    logger.info("Done. Do some preprocessing...")
-    df_cfg = pd.DataFrame([{"cfg_fn": k, "cfg_str": v} for k, v in df["cfg_str"].unique()])
-    df_cfg.loc[:, "experiment_id"] = np.arange(0, len(df_cfg))
-    df["experiment_id"] = df["cfg_fn"].apply(lambda x: np.where(df_cfg["cfg_fn"].to_numpy() == x)[0][0])
-    df_cfg.loc[:, "cfg_str"] = df_cfg["cfg_str"].apply(lambda x: x.replace("\n", "\\n"))
-    del df["cfg_str"]
-    del df["cfg_fn"]
+    """Load logs from file and preprocess.
+
+    Will collect all results from all runs contained in `rundir`.
+
+    Parameters
+    ----------
+    rundir : str | list[str]
+        Directory containing logs.
+    log_fn : str, optional
+        Filename of the log file, by default "trial_logs.jsonl"
+    n_processes : int | None, optional
+        Number of processes to use for multiprocessing, by default None
+
+    Returns.
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        Logs and config data frames.
+    """
+    if isinstance(rundir, str):
+        rundir = [rundir]
+    rundirs = rundir
+    df_list = []
+    for rundir in rundirs:
+        logger.info(f"Get rundirs from {rundir}...")
+        rundirs = get_run_dirs(rundir)
+        logger.info(f"Found {len(rundirs)} runs. Load data...")
+        partial_load_log = partial(load_log, log_fn=log_fn)
+        results = map_multiprocessing(partial_load_log, rundirs, n_processes=n_processes)
+        df = pd.concat(results).reset_index(drop=True)
+        logger.info("Done. Do some preprocessing...")
+        df_cfg = pd.DataFrame([{"cfg_fn": k, "cfg_str": v} for k, v in df["cfg_str"].unique()])
+        df_cfg.loc[:, "experiment_id"] = np.arange(0, len(df_cfg))
+        df["experiment_id"] = df["cfg_fn"].apply(lambda x: np.where(df_cfg["cfg_fn"].to_numpy() == x)[0][0])
+        df_cfg.loc[:, "cfg_str"] = df_cfg["cfg_str"].apply(lambda x: x.replace("\n", "\\n"))
+        del df["cfg_str"]
+        del df["cfg_fn"]
+        df_list.append(df)
+    df = pd.concat(df_list).reset_index(drop=True)
     logger.info("Done. Saving to file...")
     # df = df.map(lambda x: x if not isinstance(x, list) else str(x))
     df.to_csv(Path(rundir) / "logs.csv", index=False)
